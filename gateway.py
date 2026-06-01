@@ -299,13 +299,35 @@ async def fabric_handler(ws: websockets.WebSocketServerProtocol, path: str):
 # ── Dashboard API ──
 
 async def dashboard_handler(reader, writer):
-    html_path = Path(__file__).parent / "dashboard" / "index.html"
-    if html_path.exists():
-        content = html_path.read_text(encoding="utf-8")
+    request = (await reader.readline()).decode("utf-8", errors="replace").strip()
+    path = request.split(" ")[1] if " " in request else "/"
+    # Drain headers
+    while True:
+        line = await reader.readline()
+        if line == b"\r\n" or line == b"":
+            break
+
+    base = Path(__file__).parent / "dashboard"
+    if path == "/" or path == "/index.html":
+        fpath = base / "index.html"
+        mime = "text/html; charset=utf-8"
+    elif path.endswith(".woff2"):
+        fpath = base / path.lstrip("/")
+        mime = "font/woff2"
+    elif path.endswith(".css"):
+        fpath = base / path.lstrip("/")
+        mime = "text/css; charset=utf-8"
     else:
-        content = "<h1>Agent Fabric</h1><p>Dashboard not found.</p>"
-    resp = f"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {len(content.encode('utf-8'))}\r\nConnection: close\r\n\r\n{content}"
-    writer.write(resp.encode()); await writer.drain()
+        writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        writer.close(); await writer.wait_closed(); return
+
+    if fpath.exists():
+        body = fpath.read_bytes()
+        resp = f"HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+        writer.write(resp.encode()); writer.write(body)
+    else:
+        writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    await writer.drain()
     writer.close(); await writer.wait_closed()
 
 async def stats_handler(reader, writer):
